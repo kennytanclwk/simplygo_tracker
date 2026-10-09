@@ -8,8 +8,10 @@ A Vue 3 + Vite web app that recreates the key features of the Streamlit version:
 - Search by date or journey
 - Select/deselect individual trips, select visible trips, or clear all
 - Preserve selections while filtering
+- Assign each trip to Kenny, Dexter, or Chiew, individually or by matching entry/exit
+- Show assigned trip counts and fare totals for each traveler
 - Show selected trip count, selected total, statement total, and difference
-- Download selected trips as CSV
+- Download selected trips and their traveler assignments as CSV
 
 ## Requirements
 

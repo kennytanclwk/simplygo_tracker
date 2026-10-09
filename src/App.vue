@@ -3,12 +3,18 @@ import { computed, ref } from 'vue'
 import * as pdfjsLib from 'pdfjs-dist'
 import PdfWorker from 'pdfjs-dist/build/pdf.worker.min.mjs?worker&inline'
 import { parseStatementText } from './statementParser.js'
+import './traveler.css'
 
 pdfjsLib.GlobalWorkerOptions.workerPort = new PdfWorker()
 
 const trips = ref([])
 const statementTotal = ref(null)
 const selectedIds = ref(new Set())
+const travelers = ['Kenny', 'Dexter', 'Chiew']
+const tripAssignments = ref({})
+const autoEntry = ref('')
+const autoExit = ref('')
+const autoTraveler = ref(travelers[0])
 const searchText = ref('')
 const loading = ref(false)
 const errorMessage = ref('')
@@ -26,6 +32,28 @@ const selectedTrips = computed(() => trips.value.filter((trip) => selectedIds.va
 const selectedTotal = computed(() => selectedTrips.value.reduce((sum, trip) => sum + trip.amount, 0))
 const difference = computed(() => statementTotal.value == null ? null : selectedTotal.value - statementTotal.value)
 const allVisibleSelected = computed(() => visibleTrips.value.length > 0 && visibleTrips.value.every((trip) => selectedIds.value.has(trip.id)))
+const tripRoutes = computed(() => trips.value.flatMap((trip) => {
+  const separator = trip.journey.indexOf(' - ')
+  if (separator < 0) return []
+  return [{
+    trip,
+    entry: trip.journey.slice(0, separator).trim(),
+    exit: trip.journey.slice(separator + 3).trim(),
+  }]
+}))
+const entryOptions = computed(() => [...new Set(tripRoutes.value.map((route) => route.entry))].sort())
+const exitOptions = computed(() => [...new Set(tripRoutes.value.map((route) => route.exit))].sort())
+const matchingRouteTrips = computed(() => tripRoutes.value
+  .filter((route) => route.entry === autoEntry.value && route.exit === autoExit.value)
+  .map((route) => route.trip))
+const travelerSummaries = computed(() => travelers.map((traveler) => {
+  const assignedTrips = trips.value.filter((trip) => tripAssignments.value[trip.id] === traveler)
+  return {
+    name: traveler,
+    count: assignedTrips.length,
+    total: assignedTrips.reduce((sum, trip) => sum + trip.amount, 0),
+  }
+}))
 
 function stableId(base, occurrence) {
   // Details + occurrence distinguish repeated trips without relying on browser crypto support.
@@ -82,6 +110,9 @@ async function onFileChange(event) {
     trips.value = result.parsedTrips
     statementTotal.value = result.parsedTotal
     selectedIds.value = new Set()
+    tripAssignments.value = {}
+    autoEntry.value = ''
+    autoExit.value = ''
     searchText.value = ''
     if (!trips.value.length) {
       errorMessage.value = 'No trips were detected. Check that the PDF contains selectable text and that its trip lines match the expected format.'
@@ -89,6 +120,7 @@ async function onFileChange(event) {
   } catch (error) {
     trips.value = []
     selectedIds.value = new Set()
+    tripAssignments.value = {}
     statementTotal.value = null
     errorMessage.value = `Could not read this PDF. ${error?.message ?? 'Please try another statement.'}`
   } finally {
@@ -121,12 +153,29 @@ function clearVisible() {
 function clearAll() {
   selectedIds.value = new Set()
 }
+function toggleTraveler(tripId, traveler) {
+  const next = { ...tripAssignments.value }
+  if (next[tripId] === traveler) delete next[tripId]
+  else next[tripId] = traveler
+  tripAssignments.value = next
+}
+function autoAssignRoute() {
+  if (!autoEntry.value || !autoExit.value || !matchingRouteTrips.value.length) return
+  const next = { ...tripAssignments.value }
+  for (const trip of matchingRouteTrips.value) next[trip.id] = autoTraveler.value
+  tripAssignments.value = next
+}
 function downloadCsv() {
   if (!selectedTrips.value.length) return
   const quote = (value) => `"${String(value).replace(/"/g, '""')}"`
   const rows = [
-    ['Date', 'Journey', 'Amount ($)'],
-    ...selectedTrips.value.map((trip) => [trip.date, trip.journey, trip.amount.toFixed(2)]),
+    ['Date', 'Journey', 'Amount ($)', 'Traveler'],
+    ...selectedTrips.value.map((trip) => [
+      trip.date,
+      trip.journey,
+      trip.amount.toFixed(2),
+      tripAssignments.value[trip.id] ?? '',
+    ]),
   ]
   const csv = '\ufeff' + rows.map((row) => row.map(quote).join(',')).join('\r\n')
   const url = URL.createObjectURL(new Blob([csv], { type: 'text/csv;charset=utf-8;' }))
@@ -192,6 +241,58 @@ function money(value) {
         </article>
       </section>
 
+      <section class="assignment-panel panel" aria-labelledby="traveler-summary-heading">
+        <div class="section-heading">
+          <div>
+            <span class="step-label">TRAVELER TOTALS</span>
+            <h2 id="traveler-summary-heading">Amount by person</h2>
+            <p>Totals include trips assigned to each person. Unassigned trips are not included.</p>
+          </div>
+        </div>
+        <div class="traveler-summary-grid">
+          <article v-for="summary in travelerSummaries" :key="summary.name" class="traveler-summary-card">
+            <span class="metric-label">{{ summary.name.toUpperCase() }}</span>
+            <strong>{{ money(summary.total) }}</strong>
+            <span class="metric-foot">{{ summary.count }} assigned {{ summary.count === 1 ? 'trip' : 'trips' }}</span>
+          </article>
+        </div>
+      </section>
+
+      <section class="auto-assign-panel panel" aria-labelledby="auto-assign-heading">
+        <div class="section-heading">
+          <div>
+            <span class="step-label">QUICK ASSIGN</span>
+            <h2 id="auto-assign-heading">Auto-assign by entry and exit</h2>
+            <p>Choose a route and traveler to assign every trip with that exact entry and exit.</p>
+          </div>
+        </div>
+        <div class="auto-assign-controls">
+          <label class="assign-field">
+            <span>Entry</span>
+            <select v-model="autoEntry" aria-label="Entry">
+              <option value="">Select entry</option>
+              <option v-for="entry in entryOptions" :key="entry" :value="entry">{{ entry }}</option>
+            </select>
+          </label>
+          <label class="assign-field">
+            <span>Exit</span>
+            <select v-model="autoExit" aria-label="Exit">
+              <option value="">Select exit</option>
+              <option v-for="exit in exitOptions" :key="exit" :value="exit">{{ exit }}</option>
+            </select>
+          </label>
+          <label class="assign-field">
+            <span>Person</span>
+            <select v-model="autoTraveler" aria-label="Person">
+              <option v-for="traveler in travelers" :key="traveler" :value="traveler">{{ traveler }}</option>
+            </select>
+          </label>
+          <button class="button button-download auto-assign-button" :disabled="!matchingRouteTrips.length" @click="autoAssignRoute">
+            Assign {{ matchingRouteTrips.length }} {{ matchingRouteTrips.length === 1 ? 'trip' : 'trips' }}
+          </button>
+        </div>
+      </section>
+
       <section class="trips-panel panel">
         <div class="section-heading table-heading">
           <div>
@@ -221,7 +322,7 @@ function money(value) {
         <div class="table-wrap">
           <table>
             <thead>
-              <tr><th class="tick-heading">Tick</th><th>Date</th><th>Journey</th><th class="amount-heading">Amount</th></tr>
+              <tr><th class="tick-heading">Tick</th><th>Date</th><th>Journey</th><th>Person</th><th class="amount-heading">Amount</th></tr>
             </thead>
             <tbody>
               <tr v-for="trip in visibleTrips" :key="trip.id" :class="{ 'row-selected': selectedIds.has(trip.id) }">
@@ -230,9 +331,22 @@ function money(value) {
                 </td>
                 <td class="date-cell">{{ trip.date }}</td>
                 <td class="journey-cell">{{ trip.journey }}</td>
+                <td class="person-cell">
+                  <div class="person-buttons" role="group" :aria-label="`Assign ${trip.journey} to a traveler`">
+                    <button
+                      v-for="traveler in travelers"
+                      :key="traveler"
+                      class="person-button"
+                      :class="{ active: tripAssignments[trip.id] === traveler }"
+                      :aria-pressed="tripAssignments[trip.id] === traveler"
+                      :aria-label="`${tripAssignments[trip.id] === traveler ? 'Unassign' : 'Assign'} ${trip.journey} ${tripAssignments[trip.id] === traveler ? 'from' : 'to'} ${traveler}`"
+                      @click="toggleTraveler(trip.id, traveler)"
+                    >{{ traveler }}</button>
+                  </div>
+                </td>
                 <td class="amount-cell">{{ money(trip.amount) }}</td>
               </tr>
-              <tr v-if="!visibleTrips.length"><td colspan="4" class="empty-state">No trips match your search.</td></tr>
+              <tr v-if="!visibleTrips.length"><td colspan="5" class="empty-state">No trips match your search.</td></tr>
             </tbody>
           </table>
         </div>

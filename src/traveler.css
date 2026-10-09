@@ -1,0 +1,134 @@
+.assignment-panel,
+.auto-assign-panel {
+  padding: 22px;
+  margin-bottom: 20px;
+}
+
+.traveler-summary-grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 12px;
+  margin-top: 18px;
+}
+
+.traveler-summary-card {
+  min-width: 0;
+  padding: 17px 19px;
+  border: 1px solid #e6ebf3;
+  border-radius: 13px;
+  background: #fbfcff;
+}
+
+.traveler-summary-card strong {
+  display: block;
+  margin: 8px 0 4px;
+  color: #1c3152;
+  font: 700 clamp(20px, 2.5vw, 25px) Manrope, sans-serif;
+  letter-spacing: -.6px;
+  overflow-wrap: anywhere;
+}
+
+.auto-assign-controls {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr)) auto;
+  align-items: end;
+  gap: 12px;
+  margin-top: 18px;
+}
+
+.assign-field {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  min-width: 0;
+  color: #6e7f98;
+  font-size: 11px;
+  font-weight: 700;
+}
+
+.assign-field select {
+  width: 100%;
+  height: 39px;
+  padding: 0 10px;
+  border: 1px solid #dfe6f0;
+  border-radius: 9px;
+  background: #fbfcfe;
+  color: #263e60;
+  font: inherit;
+  font-weight: 500;
+}
+
+.auto-assign-button {
+  min-height: 39px;
+}
+
+.person-cell {
+  min-width: 215px;
+}
+
+.person-buttons {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 5px;
+}
+
+.person-button {
+  min-height: 30px;
+  padding: 5px 8px;
+  border: 1px solid #dfe6f0;
+  border-radius: 8px;
+  background: #fff;
+  color: #64758e;
+  font-size: 10px;
+  font-weight: 700;
+  cursor: pointer;
+}
+
+.person-button:hover {
+  border-color: #a9c3f9;
+  background: #f5f8ff;
+}
+
+.person-button.active {
+  border-color: #155eef;
+  background: #edf3ff;
+  color: #155eef;
+}
+
+.tick-button {
+  width: 24px;
+  height: 24px;
+  border-radius: 7px;
+  font-size: 14px;
+}
+
+@media (max-width: 720px) {
+  .assignment-panel,
+  .auto-assign-panel {
+    padding: 17px;
+  }
+
+  .traveler-summary-grid {
+    gap: 8px;
+  }
+
+  .traveler-summary-card {
+    padding: 14px 12px;
+  }
+
+  .auto-assign-controls {
+    grid-template-columns: 1fr 1fr;
+  }
+
+  .auto-assign-button {
+    grid-column: 1 / -1;
+    width: 100%;
+  }
+}
+
+@media (max-width: 390px) {
+  .traveler-summary-grid,
+  .auto-assign-controls {
+    grid-template-columns: 1fr;
+  }
+}
