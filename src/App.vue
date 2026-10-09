@@ -44,7 +44,11 @@ const tripRoutes = computed(() => trips.value.flatMap((trip) => {
 const entryOptions = computed(() => [...new Set(tripRoutes.value.map((route) => route.entry))].sort())
 const exitOptions = computed(() => [...new Set(tripRoutes.value.map((route) => route.exit))].sort())
 const matchingRouteTrips = computed(() => tripRoutes.value
-  .filter((route) => route.entry === autoEntry.value && route.exit === autoExit.value)
+  .filter((route) =>
+    (autoEntry.value || autoExit.value)
+    && (!autoEntry.value || route.entry === autoEntry.value)
+    && (!autoExit.value || route.exit === autoExit.value),
+  )
   .map((route) => route.trip))
 const travelerSummaries = computed(() => travelers.map((traveler) => {
   const assignedTrips = trips.value.filter((trip) => tripAssignments.value[trip.id] === traveler)
@@ -209,7 +213,6 @@ function money(value) {
           <h2>Upload statement</h2>
           <p>Choose a SimplyGo statement PDF to extract your trips.</p>
         </div>
-        <span class="step-label">STEP 01</span>
       </div>
       <label class="upload-zone" for="pdf-upload">
         <span class="upload-symbol">↑</span>
@@ -296,7 +299,6 @@ function money(value) {
       <section class="trips-panel panel">
         <div class="section-heading table-heading">
           <div>
-            <span class="step-label">STEP 02</span>
             <h2>Select your trips</h2>
             <p>Use the tick buttons to include or exclude trips. Selections stay saved while you search.</p>
           </div>

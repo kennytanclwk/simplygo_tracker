@@ -95,11 +95,17 @@
   color: #155eef;
 }
 
-.tick-button {
-  width: 24px;
-  height: 24px;
-  border-radius: 7px;
-  font-size: 14px;
+.trips-panel .tick-button {
+  width: 18px;
+  height: 18px;
+  padding: 0;
+  border-radius: 5px;
+  font-size: 11px;
+}
+
+.trips-panel tbody td {
+  padding-top: 6px;
+  padding-bottom: 6px;
 }
 
 @media (max-width: 720px) {
