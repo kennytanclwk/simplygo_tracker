@@ -1,8 +1,14 @@
 <script setup>
-import { computed, ref } from 'vue'
+import { computed, onBeforeUnmount, onMounted, ref } from 'vue'
 import * as pdfjsLib from 'pdfjs-dist'
 import PdfWorker from 'pdfjs-dist/build/pdf.worker.min.mjs?worker&inline'
 import { parseStatementText } from './statementParser.js'
+import {
+  assignTripsByTravelerStations,
+  DEFAULT_TRAVELER_STATIONS,
+  getMatchingTrips,
+  getStationOptions,
+} from './routeAssignment.js'
 import './traveler.css'
 
 pdfjsLib.GlobalWorkerOptions.workerPort = new PdfWorker()
@@ -12,14 +18,16 @@ const statementTotal = ref(null)
 const selectedIds = ref(new Set())
 const travelers = ['Kenny', 'Dexter', 'Chiew']
 const tripAssignments = ref({})
-const autoEntry = ref('')
-const autoExit = ref('')
-const autoTraveler = ref(travelers[0])
+const defaultTravelerStations = () => Object.fromEntries(
+  travelers.map((traveler) => [traveler, [...DEFAULT_TRAVELER_STATIONS[traveler]]]),
+)
+const travelerStations = ref(defaultTravelerStations())
 const searchText = ref('')
 const loading = ref(false)
 const errorMessage = ref('')
 const fileName = ref('')
 const fileInput = ref(null)
+const quickAssignPanel = ref(null)
 
 const visibleTrips = computed(() => {
   const query = searchText.value.trim().toLowerCase()
@@ -32,24 +40,15 @@ const selectedTrips = computed(() => trips.value.filter((trip) => selectedIds.va
 const selectedTotal = computed(() => selectedTrips.value.reduce((sum, trip) => sum + trip.amount, 0))
 const difference = computed(() => statementTotal.value == null ? null : selectedTotal.value - statementTotal.value)
 const allVisibleSelected = computed(() => visibleTrips.value.length > 0 && visibleTrips.value.every((trip) => selectedIds.value.has(trip.id)))
-const tripRoutes = computed(() => trips.value.flatMap((trip) => {
-  const separator = trip.journey.indexOf(' - ')
-  if (separator < 0) return []
-  return [{
-    trip,
-    entry: trip.journey.slice(0, separator).trim(),
-    exit: trip.journey.slice(separator + 3).trim(),
-  }]
+const stationOptions = computed(() => getStationOptions(trips.value))
+const travelerQuickAssignRows = computed(() => travelers.map((traveler) => {
+  const stations = travelerStations.value[traveler]
+  return {
+    traveler,
+    stations,
+    matchingTrips: getMatchingTrips(trips.value, stations),
+  }
 }))
-const entryOptions = computed(() => [...new Set(tripRoutes.value.map((route) => route.entry))].sort())
-const exitOptions = computed(() => [...new Set(tripRoutes.value.map((route) => route.exit))].sort())
-const matchingRouteTrips = computed(() => tripRoutes.value
-  .filter((route) =>
-    (autoEntry.value || autoExit.value)
-    && (!autoEntry.value || route.entry === autoEntry.value)
-    && (!autoExit.value || route.exit === autoExit.value),
-  )
-  .map((route) => route.trip))
 const travelerSummaries = computed(() => travelers.map((traveler) => {
   const assignedTrips = trips.value.filter((trip) => tripAssignments.value[trip.id] === traveler)
   return {
@@ -58,6 +57,24 @@ const travelerSummaries = computed(() => travelers.map((traveler) => {
     total: assignedTrips.reduce((sum, trip) => sum + trip.amount, 0),
   }
 }))
+const assignedTripCount = computed(() => trips.value.filter((trip) =>
+  travelers.includes(tripAssignments.value[trip.id]),
+).length)
+
+function closeStationPickersOnOutsideClick(event) {
+  const target = event.target
+  if (!(target instanceof Node)) return
+  quickAssignPanel.value?.querySelectorAll('details.station-picker[open]').forEach((picker) => {
+    if (!picker.contains(target)) picker.open = false
+  })
+}
+
+onMounted(() => {
+  document.addEventListener('pointerdown', closeStationPickersOnOutsideClick)
+})
+onBeforeUnmount(() => {
+  document.removeEventListener('pointerdown', closeStationPickersOnOutsideClick)
+})
 
 function stableId(base, occurrence) {
   // Details + occurrence distinguish repeated trips without relying on browser crypto support.
@@ -114,9 +131,8 @@ async function onFileChange(event) {
     trips.value = result.parsedTrips
     statementTotal.value = result.parsedTotal
     selectedIds.value = new Set()
-    tripAssignments.value = {}
-    autoEntry.value = ''
-    autoExit.value = ''
+    travelerStations.value = defaultTravelerStations()
+    tripAssignments.value = assignTripsByTravelerStations(trips.value, travelerStations.value)
     searchText.value = ''
     if (!trips.value.length) {
       errorMessage.value = 'No trips were detected. Check that the PDF contains selectable text and that its trip lines match the expected format.'
@@ -163,11 +179,20 @@ function toggleTraveler(tripId, traveler) {
   else next[tripId] = traveler
   tripAssignments.value = next
 }
-function autoAssignRoute() {
-  if (!autoEntry.value || !autoExit.value || !matchingRouteTrips.value.length) return
-  const next = { ...tripAssignments.value }
-  for (const trip of matchingRouteTrips.value) next[trip.id] = autoTraveler.value
-  tripAssignments.value = next
+function toggleStation(traveler, station) {
+  const selected = new Set(travelerStations.value[traveler])
+  const isSelected = selected.has(station)
+  if (isSelected) selected.delete(station)
+  else selected.add(station)
+  travelerStations.value = {
+    ...travelerStations.value,
+    [traveler]: [...selected],
+  }
+  if (!isSelected) {
+    const next = { ...tripAssignments.value }
+    for (const trip of getMatchingTrips(trips.value, [...selected])) next[trip.id] = traveler
+    tripAssignments.value = next
+  }
 }
 function downloadCsv() {
   if (!selectedTrips.value.length) return
@@ -226,30 +251,12 @@ function money(value) {
     </section>
 
     <template v-if="trips.length">
-      <section class="summary-grid" aria-label="Trip totals">
-        <article class="metric-card">
-          <span class="metric-label">SELECTED TRIPS</span>
-          <strong>{{ selectedTrips.length }}</strong>
-          <span class="metric-foot">of {{ trips.length }} trips</span>
-        </article>
-        <article class="metric-card metric-primary">
-          <span class="metric-label">SELECTED TOTAL</span>
-          <strong>{{ money(selectedTotal) }}</strong>
-          <span class="metric-foot">Based on selected trips</span>
-        </article>
-        <article class="metric-card">
-          <span class="metric-label">STATEMENT TOTAL</span>
-          <strong>{{ statementTotal == null ? '—' : money(statementTotal) }}</strong>
-          <span class="metric-foot">{{ statementTotal == null ? 'Not detected in PDF' : 'Read from statement' }}</span>
-        </article>
-      </section>
-
       <section class="assignment-panel panel" aria-labelledby="traveler-summary-heading">
         <div class="section-heading">
           <div>
             <span class="step-label">TRAVELER TOTALS</span>
             <h2 id="traveler-summary-heading">Amount by person</h2>
-            <p>Totals include trips assigned to each person. Unassigned trips are not included.</p>
+            <p>{{ assignedTripCount }} trips assigned in total. Unassigned trips are not included.</p>
           </div>
         </div>
         <div class="traveler-summary-grid">
@@ -261,38 +268,33 @@ function money(value) {
         </div>
       </section>
 
-      <section class="auto-assign-panel panel" aria-labelledby="auto-assign-heading">
+      <section ref="quickAssignPanel" class="auto-assign-panel panel" aria-labelledby="auto-assign-heading">
         <div class="section-heading">
           <div>
             <span class="step-label">QUICK ASSIGN</span>
             <h2 id="auto-assign-heading">Auto-assign by entry and exit</h2>
-            <p>Choose a route and traveler to assign every trip with that exact entry and exit.</p>
+            <p>Select one or more stations for each person. A trip matches when either endpoint contains a selected station.</p>
           </div>
         </div>
-        <div class="auto-assign-controls">
-          <label class="assign-field">
-            <span>Entry</span>
-            <select v-model="autoEntry" aria-label="Entry">
-              <option value="">Select entry</option>
-              <option v-for="entry in entryOptions" :key="entry" :value="entry">{{ entry }}</option>
-            </select>
-          </label>
-          <label class="assign-field">
-            <span>Exit</span>
-            <select v-model="autoExit" aria-label="Exit">
-              <option value="">Select exit</option>
-              <option v-for="exit in exitOptions" :key="exit" :value="exit">{{ exit }}</option>
-            </select>
-          </label>
-          <label class="assign-field">
-            <span>Person</span>
-            <select v-model="autoTraveler" aria-label="Person">
-              <option v-for="traveler in travelers" :key="traveler" :value="traveler">{{ traveler }}</option>
-            </select>
-          </label>
-          <button class="button button-download auto-assign-button" :disabled="!matchingRouteTrips.length" @click="autoAssignRoute">
-            Assign {{ matchingRouteTrips.length }} {{ matchingRouteTrips.length === 1 ? 'trip' : 'trips' }}
-          </button>
+        <div class="quick-assign-rows">
+          <div v-for="row in travelerQuickAssignRows" :key="row.traveler" class="quick-assign-row">
+            <strong class="quick-assign-name">{{ row.traveler }}</strong>
+            <details class="station-picker">
+              <summary>{{ row.stations.length ? `${row.stations.length} stations selected` : 'Select stations' }}</summary>
+              <div class="station-options">
+                <label v-for="station in stationOptions" :key="station" class="station-option">
+                  <input
+                    type="checkbox"
+                    :checked="row.stations.includes(station)"
+                    @change="toggleStation(row.traveler, station)"
+                  />
+                  <span>{{ station }}</span>
+                </label>
+                <p v-if="!stationOptions.length" class="station-empty">No stations found in the trips.</p>
+              </div>
+            </details>
+            <span class="quick-assign-count">{{ row.matchingTrips.length }} matching {{ row.matchingTrips.length === 1 ? 'trip' : 'trips' }}</span>
+          </div>
         </div>
       </section>
 
@@ -357,6 +359,24 @@ function money(value) {
           <span v-if="Math.abs(difference) < 0.01">✓ Selected total matches the statement total.</span>
           <span v-else>Selected total minus statement total: <strong>{{ difference > 0 ? '+' : '−' }}{{ money(Math.abs(difference)) }}</strong></span>
         </div>
+      </section>
+
+      <section class="summary-grid" aria-label="Trip totals">
+        <article class="metric-card metric-primary">
+          <span class="metric-label">SELECTED TOTAL</span>
+          <strong>{{ money(selectedTotal) }}</strong>
+          <span class="metric-foot">Based on selected trips</span>
+        </article>
+        <article class="metric-card">
+          <span class="metric-label">STATEMENT TOTAL</span>
+          <strong>{{ statementTotal == null ? '—' : money(statementTotal) }}</strong>
+          <span class="metric-foot">{{ statementTotal == null ? 'Not detected in PDF' : 'Read from statement' }}</span>
+        </article>
+        <article class="metric-card">
+          <span class="metric-label">SELECTED TRIPS</span>
+          <strong>{{ selectedTrips.length }}</strong>
+          <span class="metric-foot">of {{ trips.length }} trips</span>
+        </article>
       </section>
     </template>
     <footer>SimplyGo Trip Selector <span>·</span> Your PDF is processed in this browser and is not uploaded to a server.</footer>
