@@ -6,10 +6,11 @@ A Vue 3 + Vite web app that recreates the key features of the Streamlit version:
 - Extract selectable PDF text in the browser with PDF.js
 - Parse trip date, journey, fare, and statement total
 - Search by date or journey
+- Sort trips by date, journey, traveler, or amount; unassigned trips stay at the top when sorting by traveler
 - Select/deselect individual trips, select visible trips, or clear all
 - Preserve selections while filtering
 - Assign each trip to Kenny, Dexter, or Chiew, individually or by matching entry/exit
-- Show assigned trip counts and fare totals for each traveler
+- Show assigned trip counts and net fare totals for each traveler, with optional refund deductions
 - Preselect Kenny's and Dexter's usual stations for quick assignment
 - Show selected trip count, selected total, statement total, and difference
 - Download selected trips and their traveler assignments as CSV

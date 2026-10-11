@@ -32,13 +32,36 @@
   overflow-wrap: anywhere;
 }
 
+.refund-field {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  margin-top: 12px;
+  color: #6e7f98;
+  font-size: 11px;
+  font-weight: 700;
+}
+
+.refund-field input {
+  width: 108px;
+  height: 32px;
+  padding: 0 8px;
+  border: 1px solid #dfe6f0;
+  border-radius: 8px;
+  background: #fff;
+  color: #263e60;
+  font: inherit;
+  font-weight: 500;
+  text-align: right;
+}
+
 .quick-assign-rows {
   margin-top: 18px;
 }
 
 .quick-assign-row {
-  display: grid;
-  grid-template-columns: 100px minmax(220px, 1fr) auto;
+  display: flex;
   align-items: center;
   gap: 12px;
   padding: 12px 0;
@@ -46,11 +69,14 @@
 }
 
 .quick-assign-name {
+  flex: 0 0 100px;
   color: #263e60;
   font-size: 13px;
+  white-space: nowrap;
 }
 
 .station-picker {
+  flex: 1 1 auto;
   position: relative;
   min-width: 0;
   width: 100%;
@@ -127,9 +153,34 @@
 }
 
 .quick-assign-count {
+  flex: 0 0 auto;
   color: #78879c;
   font-size: 11px;
   white-space: nowrap;
+}
+
+@media (min-width: 900px) {
+  .quick-assign-rows {
+    display: grid;
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+    gap: 12px;
+  }
+
+  .quick-assign-row {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr);
+    align-content: start;
+    gap: 8px;
+    min-width: 0;
+  }
+
+  .quick-assign-name {
+    flex: initial;
+  }
+
+  .quick-assign-count {
+    grid-column: auto;
+  }
 }
 
 .person-cell {
@@ -178,6 +229,29 @@
   padding-bottom: 6px;
 }
 
+.table-sort-button {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  text-transform: inherit;
+  letter-spacing: inherit;
+  cursor: pointer;
+}
+
+.table-sort-button:hover {
+  color: #155eef;
+}
+
+.table-sort-button span {
+  color: #155eef;
+  font-size: 12px;
+}
+
 @media (max-width: 720px) {
   .assignment-panel,
   .auto-assign-panel {
@@ -195,6 +269,7 @@
   .quick-assign-row {
     grid-template-columns: 1fr auto;
     gap: 8px;
+    display: grid;
   }
 
   .quick-assign-name {

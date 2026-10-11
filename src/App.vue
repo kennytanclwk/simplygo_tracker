@@ -9,6 +9,7 @@ import {
   getMatchingTrips,
   getStationOptions,
 } from './routeAssignment.js'
+import { sortTrips } from './tableSorting.js'
 import './traveler.css'
 
 pdfjsLib.GlobalWorkerOptions.workerPort = new PdfWorker()
@@ -18,11 +19,14 @@ const statementTotal = ref(null)
 const selectedIds = ref(new Set())
 const travelers = ['Kenny', 'Dexter', 'Chiew']
 const tripAssignments = ref({})
+const travelerRefunds = ref(Object.fromEntries(travelers.map((traveler) => [traveler, ''])))
 const defaultTravelerStations = () => Object.fromEntries(
   travelers.map((traveler) => [traveler, [...DEFAULT_TRAVELER_STATIONS[traveler]]]),
 )
 const travelerStations = ref(defaultTravelerStations())
 const searchText = ref('')
+const sortKey = ref('person')
+const sortDirection = ref('asc')
 const loading = ref(false)
 const errorMessage = ref('')
 const fileName = ref('')
@@ -31,10 +35,12 @@ const quickAssignPanel = ref(null)
 
 const visibleTrips = computed(() => {
   const query = searchText.value.trim().toLowerCase()
-  if (!query) return trips.value
-  return trips.value.filter((trip) =>
-    trip.date.toLowerCase().includes(query) || trip.journey.toLowerCase().includes(query),
-  )
+  const filteredTrips = query
+    ? trips.value.filter((trip) =>
+      trip.date.toLowerCase().includes(query) || trip.journey.toLowerCase().includes(query),
+    )
+    : trips.value
+  return sortTrips(filteredTrips, tripAssignments.value, sortKey.value, sortDirection.value)
 })
 const selectedTrips = computed(() => trips.value.filter((trip) => selectedIds.value.has(trip.id)))
 const selectedTotal = computed(() => selectedTrips.value.reduce((sum, trip) => sum + trip.amount, 0))
@@ -51,10 +57,14 @@ const travelerQuickAssignRows = computed(() => travelers.map((traveler) => {
 }))
 const travelerSummaries = computed(() => travelers.map((traveler) => {
   const assignedTrips = trips.value.filter((trip) => tripAssignments.value[trip.id] === traveler)
+  const assignedTotal = assignedTrips.reduce((sum, trip) => sum + trip.amount, 0)
+  const enteredRefund = Number(travelerRefunds.value[traveler])
+  const refund = Number.isFinite(enteredRefund) && enteredRefund > 0 ? enteredRefund : 0
   return {
     name: traveler,
     count: assignedTrips.length,
-    total: assignedTrips.reduce((sum, trip) => sum + trip.amount, 0),
+    refund,
+    total: assignedTotal - refund,
   }
 }))
 const assignedTripCount = computed(() => trips.value.filter((trip) =>
@@ -132,6 +142,7 @@ async function onFileChange(event) {
     statementTotal.value = result.parsedTotal
     selectedIds.value = new Set()
     travelerStations.value = defaultTravelerStations()
+    travelerRefunds.value = Object.fromEntries(travelers.map((traveler) => [traveler, '']))
     tripAssignments.value = assignTripsByTravelerStations(trips.value, travelerStations.value)
     searchText.value = ''
     if (!trips.value.length) {
@@ -141,6 +152,7 @@ async function onFileChange(event) {
     trips.value = []
     selectedIds.value = new Set()
     tripAssignments.value = {}
+    travelerRefunds.value = Object.fromEntries(travelers.map((traveler) => [traveler, '']))
     statementTotal.value = null
     errorMessage.value = `Could not read this PDF. ${error?.message ?? 'Please try another statement.'}`
   } finally {
@@ -172,6 +184,16 @@ function clearVisible() {
 }
 function clearAll() {
   selectedIds.value = new Set()
+}
+function setSort(key) {
+  if (sortKey.value === key) sortDirection.value = sortDirection.value === 'asc' ? 'desc' : 'asc'
+  else {
+    sortKey.value = key
+    sortDirection.value = 'asc'
+  }
+}
+function sortIndicator(key) {
+  return sortKey.value === key ? (sortDirection.value === 'asc' ? '↑' : '↓') : '↕'
 }
 function toggleTraveler(tripId, traveler) {
   const next = { ...tripAssignments.value }
@@ -264,6 +286,18 @@ function money(value) {
             <span class="metric-label">{{ summary.name.toUpperCase() }}</span>
             <strong>{{ money(summary.total) }}</strong>
             <span class="metric-foot">{{ summary.count }} assigned {{ summary.count === 1 ? 'trip' : 'trips' }}</span>
+            <label class="refund-field">
+              <span>Refund</span>
+              <input
+                v-model="travelerRefunds[summary.name]"
+                type="number"
+                min="0"
+                step="0.01"
+                inputmode="decimal"
+                placeholder="0.00"
+                :aria-label="`Refund for ${summary.name}`"
+              />
+            </label>
           </article>
         </div>
       </section>
@@ -326,7 +360,21 @@ function money(value) {
         <div class="table-wrap">
           <table>
             <thead>
-              <tr><th class="tick-heading">Tick</th><th>Date</th><th>Journey</th><th>Person</th><th class="amount-heading">Amount</th></tr>
+              <tr>
+                <th class="tick-heading">Tick</th>
+                <th :aria-sort="sortKey === 'date' ? (sortDirection === 'asc' ? 'ascending' : 'descending') : 'none'">
+                  <button class="table-sort-button" @click="setSort('date')">Date <span aria-hidden="true">{{ sortIndicator('date') }}</span></button>
+                </th>
+                <th :aria-sort="sortKey === 'journey' ? (sortDirection === 'asc' ? 'ascending' : 'descending') : 'none'">
+                  <button class="table-sort-button" @click="setSort('journey')">Journey <span aria-hidden="true">{{ sortIndicator('journey') }}</span></button>
+                </th>
+                <th :aria-sort="sortKey === 'person' ? (sortDirection === 'asc' ? 'ascending' : 'descending') : 'none'">
+                  <button class="table-sort-button" @click="setSort('person')">Person <span aria-hidden="true">{{ sortIndicator('person') }}</span></button>
+                </th>
+                <th class="amount-heading" :aria-sort="sortKey === 'amount' ? (sortDirection === 'asc' ? 'ascending' : 'descending') : 'none'">
+                  <button class="table-sort-button" @click="setSort('amount')">Amount <span aria-hidden="true">{{ sortIndicator('amount') }}</span></button>
+                </th>
+              </tr>
             </thead>
             <tbody>
               <tr v-for="trip in visibleTrips" :key="trip.id" :class="{ 'row-selected': selectedIds.has(trip.id) }">
