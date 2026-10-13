@@ -2,7 +2,6 @@ import test from 'node:test'
 import assert from 'node:assert/strict'
 import {
   assignTripsByTravelerStations,
-  DEFAULT_TRAVELER_STATIONS,
   getMatchingTrips,
   getStationOptions,
 } from '../src/routeAssignment.js'
@@ -14,7 +13,10 @@ const trips = [
 ]
 
 test('lists distinct stations from both trip endpoints', () => {
-  const stations = getStationOptions(trips)
+  const stations = getStationOptions(trips, {
+    Kenny: ['Lorong Chuan'],
+    Dexter: ['Woodlands TEL', 'Opp Fairfield Meth Pr Sch'],
+  })
   assert.ok(stations.includes('Lorong Chuan'))
   assert.ok(stations.includes('Woodlands TEL'))
   assert.ok(stations.includes('Opp Fairfield Meth Pr Sch'))
@@ -36,15 +38,7 @@ test('does not match trips without selected stations or route endpoints', () => 
   assert.deepEqual(getMatchingTrips([{ id: '4', journey: 'Unparsed trip' }], ['Hougang']), [])
 })
 
-test('provides default stations for Kenny and Dexter and assigns matching trips', () => {
-  assert.deepEqual(DEFAULT_TRAVELER_STATIONS.Kenny, ['Lorong Chuan', 'Kangkar', 'Blk 111', 'Opp Blk 110'])
-  assert.deepEqual(DEFAULT_TRAVELER_STATIONS.Dexter, [
-    'Woodlands TEL',
-    'one-north',
-    'Fairfield Meth Pr Sch',
-    'Opp Fairfield Meth Pr Sch',
-  ])
-  assert.deepEqual(DEFAULT_TRAVELER_STATIONS.Chiew, ["Opp W'lands Auto Hub", "Bef W'Lands Ind Pk E4"])
+test('assigns trips from the traveler stations supplied by the spreadsheet', () => {
   assert.deepEqual(assignTripsByTravelerStations(trips, {
     Kenny: ['Lorong Chuan'],
     Dexter: ['Hougang'],

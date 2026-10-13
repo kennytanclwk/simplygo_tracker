@@ -1,3 +1,5 @@
+import { getTripDayType } from './tripDate.js'
+
 const MONTHS = ['jan', 'feb', 'mar', 'apr', 'may', 'jun', 'jul', 'aug', 'sep', 'oct', 'nov', 'dec']
 
 function compareDates(left, right) {
@@ -17,6 +19,12 @@ function compareDates(left, right) {
 function compareValues(left, right, sortKey) {
   if (sortKey === 'amount') return left.amount - right.amount
   if (sortKey === 'date') return compareDates(left.date, right.date)
+  if (sortKey === 'day') {
+    const dayOrder = { weekday: 0, weekend: 1 }
+    const dayDifference = (dayOrder[getTripDayType(left.date)] ?? 2)
+      - (dayOrder[getTripDayType(right.date)] ?? 2)
+    return dayDifference || compareDates(left.date, right.date)
+  }
   const leftValue = sortKey === 'person' ? left.person : left.journey
   const rightValue = sortKey === 'person' ? right.person : right.journey
   return leftValue.localeCompare(rightValue, undefined, { numeric: true, sensitivity: 'base' })

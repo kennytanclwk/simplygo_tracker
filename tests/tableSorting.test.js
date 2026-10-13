@@ -37,3 +37,21 @@ test('sorts dates chronologically and amounts numerically', () => {
     'unassigned',
   ])
 })
+
+test('sorts weekday and weekend trips by day type', () => {
+  const dayTrips = [
+    { id: 'sunday', date: '11 Oct 2026', journey: 'A - B', amount: 1 },
+    { id: 'monday', date: '12 Oct 2026', journey: 'A - B', amount: 1 },
+    { id: 'saturday', date: '10 Oct 2026', journey: 'A - B', amount: 1 },
+  ]
+  assert.deepEqual(sortTrips(dayTrips, {}, 'day', 'asc').map((trip) => trip.id), [
+    'monday',
+    'saturday',
+    'sunday',
+  ])
+  assert.deepEqual(sortTrips(dayTrips, {}, 'day', 'desc').map((trip) => trip.id), [
+    'sunday',
+    'saturday',
+    'monday',
+  ])
+})

@@ -3,13 +3,16 @@ import { computed, onBeforeUnmount, onMounted, ref } from 'vue'
 import * as pdfjsLib from 'pdfjs-dist'
 import PdfWorker from 'pdfjs-dist/build/pdf.worker.min.mjs?worker&inline'
 import { parseStatementText } from './statementParser.js'
+import { fetchTravelerStations } from './travelerStations.js'
 import {
   assignTripsByTravelerStations,
-  DEFAULT_TRAVELER_STATIONS,
   getMatchingTrips,
+  getTripRoute,
   getStationOptions,
 } from './routeAssignment.js'
+import { filterTrips, UNASSIGNED_FILTER } from './tableFiltering.js'
 import { sortTrips } from './tableSorting.js'
+import { getTripDayType, parseTripDate } from './tripDate.js'
 import './traveler.css'
 
 pdfjsLib.GlobalWorkerOptions.workerPort = new PdfWorker()
@@ -17,37 +20,105 @@ pdfjsLib.GlobalWorkerOptions.workerPort = new PdfWorker()
 const trips = ref([])
 const statementTotal = ref(null)
 const selectedIds = ref(new Set())
-const travelers = ['Kenny', 'Dexter', 'Chiew']
+const travelers = ref([])
 const tripAssignments = ref({})
-const travelerRefunds = ref(Object.fromEntries(travelers.map((traveler) => [traveler, ''])))
-const defaultTravelerStations = () => Object.fromEntries(
-  travelers.map((traveler) => [traveler, [...DEFAULT_TRAVELER_STATIONS[traveler]]]),
-)
-const travelerStations = ref(defaultTravelerStations())
+const assignmentHistory = ref([])
+const travelerRefunds = ref({})
+const defaultTravelerStations = ref({})
+const travelerStations = ref({})
 const searchText = ref('')
+const tableFilters = ref({
+  dateFrom: '',
+  dateTo: '',
+  journey: [],
+  traveler: '',
+  minAmount: '',
+  maxAmount: '',
+})
 const sortKey = ref('person')
 const sortDirection = ref('asc')
 const loading = ref(false)
 const errorMessage = ref('')
+const stationDefaultsLoading = ref(true)
+const stationDefaultsError = ref('')
 const fileName = ref('')
 const fileInput = ref(null)
-const quickAssignPanel = ref(null)
+const dateCalendarMonth = ref('')
 
 const visibleTrips = computed(() => {
-  const query = searchText.value.trim().toLowerCase()
-  const filteredTrips = query
-    ? trips.value.filter((trip) =>
-      trip.date.toLowerCase().includes(query) || trip.journey.toLowerCase().includes(query),
-    )
-    : trips.value
+  const filteredTrips = filterTrips(
+    trips.value,
+    tripAssignments.value,
+    searchText.value,
+    tableFilters.value,
+  )
   return sortTrips(filteredTrips, tripAssignments.value, sortKey.value, sortDirection.value)
 })
 const selectedTrips = computed(() => trips.value.filter((trip) => selectedIds.value.has(trip.id)))
 const selectedTotal = computed(() => selectedTrips.value.reduce((sum, trip) => sum + trip.amount, 0))
 const difference = computed(() => statementTotal.value == null ? null : selectedTotal.value - statementTotal.value)
 const allVisibleSelected = computed(() => visibleTrips.value.length > 0 && visibleTrips.value.every((trip) => selectedIds.value.has(trip.id)))
-const stationOptions = computed(() => getStationOptions(trips.value))
-const travelerQuickAssignRows = computed(() => travelers.map((traveler) => {
+const stationOptions = computed(() => getStationOptions(trips.value, defaultTravelerStations.value))
+const journeyStationOptions = computed(() => [...new Set(trips.value.flatMap((trip) => {
+  const route = getTripRoute(trip)
+  return route ? [route.entry, route.exit] : []
+}))]
+  .sort((left, right) => left.localeCompare(right, undefined, { numeric: true, sensitivity: 'base' })))
+const amountBounds = computed(() => {
+  if (!trips.value.length) return { min: 0, max: 0 }
+  const amounts = trips.value.map((trip) => trip.amount)
+  return {
+    min: Math.round(Math.min(...amounts) * 100),
+    max: Math.round(Math.max(...amounts) * 100),
+  }
+})
+const minimumAmountSliderValue = computed(() => tableFilters.value.minAmount === ''
+  ? amountBounds.value.min
+  : Math.round(Number(tableFilters.value.minAmount) * 100))
+const maximumAmountSliderValue = computed(() => tableFilters.value.maxAmount === ''
+  ? amountBounds.value.max
+  : Math.round(Number(tableFilters.value.maxAmount) * 100))
+const dateRangeLabel = computed(() => {
+  const { dateFrom, dateTo } = tableFilters.value
+  if (dateFrom && dateTo) return `${formatCalendarDate(dateFrom)} – ${formatCalendarDate(dateTo)}`
+  if (dateFrom) return `From ${formatCalendarDate(dateFrom)}`
+  if (dateTo) return `Through ${formatCalendarDate(dateTo)}`
+  return 'Any date'
+})
+const journeyFilterLabel = computed(() => {
+  const count = tableFilters.value.journey.length
+  return count ? `${count} ${count === 1 ? 'station' : 'stations'} selected` : 'All stations'
+})
+const calendarHeading = computed(() => {
+  if (!dateCalendarMonth.value) return ''
+  const [year, month] = dateCalendarMonth.value.split('-').map(Number)
+  return new Date(Date.UTC(year, month - 1, 1)).toLocaleDateString('en-SG', {
+    month: 'long',
+    year: 'numeric',
+    timeZone: 'UTC',
+  })
+})
+const calendarDays = computed(() => {
+  if (!dateCalendarMonth.value) return []
+  const [year, month] = dateCalendarMonth.value.split('-').map(Number)
+  const firstWeekday = new Date(Date.UTC(year, month - 1, 1)).getUTCDay()
+  const daysInMonth = new Date(Date.UTC(year, month, 0)).getUTCDate()
+  const { dateFrom, dateTo } = tableFilters.value
+  return [
+    ...Array(firstWeekday).fill(null),
+    ...Array.from({ length: daysInMonth }, (_, index) => {
+      const day = index + 1
+      const date = `${year}-${String(month).padStart(2, '0')}-${String(day).padStart(2, '0')}`
+      return {
+        date,
+        day,
+        selected: date === dateFrom || date === dateTo,
+        inRange: Boolean(dateFrom && dateTo && date > dateFrom && date < dateTo),
+      }
+    }),
+  ]
+})
+const travelerQuickAssignRows = computed(() => travelers.value.map((traveler) => {
   const stations = travelerStations.value[traveler]
   return {
     traveler,
@@ -55,7 +126,7 @@ const travelerQuickAssignRows = computed(() => travelers.map((traveler) => {
     matchingTrips: getMatchingTrips(trips.value, stations),
   }
 }))
-const travelerSummaries = computed(() => travelers.map((traveler) => {
+const travelerSummaries = computed(() => travelers.value.map((traveler) => {
   const assignedTrips = trips.value.filter((trip) => tripAssignments.value[trip.id] === traveler)
   const assignedTotal = assignedTrips.reduce((sum, trip) => sum + trip.amount, 0)
   const enteredRefund = Number(travelerRefunds.value[traveler])
@@ -68,27 +139,58 @@ const travelerSummaries = computed(() => travelers.map((traveler) => {
   }
 }))
 const assignedTripCount = computed(() => trips.value.filter((trip) =>
-  travelers.includes(tripAssignments.value[trip.id]),
+  travelers.value.includes(tripAssignments.value[trip.id]),
 ).length)
+const undoAssignmentLabel = computed(() => {
+  const lastChange = assignmentHistory.value.at(-1)
+  return lastChange ? `Undo ${lastChange.label}` : 'Undo assignment'
+})
+const hasActiveTableFilters = computed(() => Boolean(
+  searchText.value.trim()
+  || tableFilters.value.dateFrom
+  || tableFilters.value.dateTo
+  || tableFilters.value.journey.length
+  || tableFilters.value.traveler
+  || tableFilters.value.minAmount !== ''
+  || tableFilters.value.maxAmount !== '',
+))
 
-function closeStationPickersOnOutsideClick(event) {
+function closeDropdownsOnOutsideClick(event) {
   const target = event.target
   if (!(target instanceof Node)) return
-  quickAssignPanel.value?.querySelectorAll('details.station-picker[open]').forEach((picker) => {
-    if (!picker.contains(target)) picker.open = false
+  document.querySelectorAll('details.station-picker[open], details.table-filter-dropdown[open]').forEach((dropdown) => {
+    if (!dropdown.contains(target)) dropdown.open = false
   })
 }
 
 onMounted(() => {
-  document.addEventListener('pointerdown', closeStationPickersOnOutsideClick)
+  document.addEventListener('pointerdown', closeDropdownsOnOutsideClick)
+  void loadTravelerStations()
 })
 onBeforeUnmount(() => {
-  document.removeEventListener('pointerdown', closeStationPickersOnOutsideClick)
+  document.removeEventListener('pointerdown', closeDropdownsOnOutsideClick)
 })
 
 function stableId(base, occurrence) {
   // Details + occurrence distinguish repeated trips without relying on browser crypto support.
   return `${base}::${occurrence}`
+}
+
+async function loadTravelerStations() {
+  try {
+    const stationsByTraveler = await fetchTravelerStations()
+    defaultTravelerStations.value = stationsByTraveler
+    travelers.value = Object.keys(stationsByTraveler)
+    travelerStations.value = Object.fromEntries(
+      travelers.value.map((traveler) => [traveler, [...stationsByTraveler[traveler]]]),
+    )
+    travelerRefunds.value = Object.fromEntries(travelers.value.map((traveler) => [traveler, '']))
+  } catch (error) {
+    stationDefaultsError.value =
+      `Could not load default traveler stations from Google Sheets. ${error?.message ?? 'Please check the sheet and reload the page.'}`
+  } finally {
+    stationDefaultsLoading.value = false
+  }
 }
 
 async function extractPdfText(file) {
@@ -130,6 +232,7 @@ async function parseStatement(file) {
 async function onFileChange(event) {
   const file = event.target.files?.[0]
   if (!file) return
+  if (stationDefaultsLoading.value || stationDefaultsError.value) return
   errorMessage.value = ''
   loading.value = true
   fileName.value = file.name
@@ -139,12 +242,20 @@ async function onFileChange(event) {
     }
     const result = await parseStatement(file)
     trips.value = result.parsedTrips
+    const firstTripDate = trips.value.length ? parseTripDate(trips.value[0].date) : null
+    if (firstTripDate) {
+      dateCalendarMonth.value = `${firstTripDate.getUTCFullYear()}-${String(firstTripDate.getUTCMonth() + 1).padStart(2, '0')}`
+    }
     statementTotal.value = result.parsedTotal
     selectedIds.value = new Set()
-    travelerStations.value = defaultTravelerStations()
-    travelerRefunds.value = Object.fromEntries(travelers.map((traveler) => [traveler, '']))
+    assignmentHistory.value = []
+    travelerStations.value = Object.fromEntries(
+      travelers.value.map((traveler) => [traveler, [...defaultTravelerStations.value[traveler]]]),
+    )
+    travelerRefunds.value = Object.fromEntries(travelers.value.map((traveler) => [traveler, '']))
     tripAssignments.value = assignTripsByTravelerStations(trips.value, travelerStations.value)
     searchText.value = ''
+    clearTableFilters()
     if (!trips.value.length) {
       errorMessage.value = 'No trips were detected. Check that the PDF contains selectable text and that its trip lines match the expected format.'
     }
@@ -152,7 +263,8 @@ async function onFileChange(event) {
     trips.value = []
     selectedIds.value = new Set()
     tripAssignments.value = {}
-    travelerRefunds.value = Object.fromEntries(travelers.map((traveler) => [traveler, '']))
+    assignmentHistory.value = []
+    travelerRefunds.value = Object.fromEntries(travelers.value.map((traveler) => [traveler, '']))
     statementTotal.value = null
     errorMessage.value = `Could not read this PDF. ${error?.message ?? 'Please try another statement.'}`
   } finally {
@@ -185,6 +297,52 @@ function clearVisible() {
 function clearAll() {
   selectedIds.value = new Set()
 }
+function clearTableFilters() {
+  searchText.value = ''
+  tableFilters.value = {
+    dateFrom: '',
+    dateTo: '',
+    journey: [],
+    traveler: '',
+    minAmount: '',
+    maxAmount: '',
+  }
+}
+function setMinimumAmount(value) {
+  const cents = Math.min(Number(value), maximumAmountSliderValue.value)
+  tableFilters.value.minAmount = cents === amountBounds.value.min ? '' : (cents / 100).toFixed(2)
+}
+function setMaximumAmount(value) {
+  const cents = Math.max(Number(value), minimumAmountSliderValue.value)
+  tableFilters.value.maxAmount = cents === amountBounds.value.max ? '' : (cents / 100).toFixed(2)
+}
+function changeCalendarMonth(offset) {
+  if (!dateCalendarMonth.value) return
+  const [year, month] = dateCalendarMonth.value.split('-').map(Number)
+  const nextMonth = new Date(Date.UTC(year, month - 1 + offset, 1))
+  dateCalendarMonth.value = `${nextMonth.getUTCFullYear()}-${String(nextMonth.getUTCMonth() + 1).padStart(2, '0')}`
+}
+function selectCalendarDate(date) {
+  const { dateFrom, dateTo } = tableFilters.value
+  if (!dateFrom || dateTo) {
+    tableFilters.value.dateFrom = date
+    tableFilters.value.dateTo = ''
+  } else if (date < dateFrom) {
+    tableFilters.value.dateFrom = date
+    tableFilters.value.dateTo = dateFrom
+  } else {
+    tableFilters.value.dateTo = date
+  }
+}
+function formatCalendarDate(value) {
+  const [year, month, day] = value.split('-').map(Number)
+  return new Date(Date.UTC(year, month - 1, day)).toLocaleDateString('en-SG', {
+    day: 'numeric',
+    month: 'short',
+    year: 'numeric',
+    timeZone: 'UTC',
+  })
+}
 function setSort(key) {
   if (sortKey.value === key) sortDirection.value = sortDirection.value === 'asc' ? 'desc' : 'asc'
   else {
@@ -195,11 +353,31 @@ function setSort(key) {
 function sortIndicator(key) {
   return sortKey.value === key ? (sortDirection.value === 'asc' ? '↑' : '↓') : '↕'
 }
+function updateTripAssignments(nextAssignments, label) {
+  const previousAssignments = tripAssignments.value
+  const changedCount = [...new Set([
+    ...Object.keys(previousAssignments),
+    ...Object.keys(nextAssignments),
+  ])].filter((tripId) => previousAssignments[tripId] !== nextAssignments[tripId]).length
+  if (!changedCount) return
+
+  assignmentHistory.value = [
+    ...assignmentHistory.value.slice(-49),
+    { assignments: previousAssignments, label: `${label} (${changedCount})` },
+  ]
+  tripAssignments.value = nextAssignments
+}
+function undoAssignment() {
+  const previousChange = assignmentHistory.value.at(-1)
+  if (!previousChange) return
+  assignmentHistory.value = assignmentHistory.value.slice(0, -1)
+  tripAssignments.value = previousChange.assignments
+}
 function toggleTraveler(tripId, traveler) {
   const next = { ...tripAssignments.value }
   if (next[tripId] === traveler) delete next[tripId]
   else next[tripId] = traveler
-  tripAssignments.value = next
+  updateTripAssignments(next, traveler)
 }
 function toggleStation(traveler, station) {
   const selected = new Set(travelerStations.value[traveler])
@@ -213,7 +391,7 @@ function toggleStation(traveler, station) {
   if (!isSelected) {
     const next = { ...tripAssignments.value }
     for (const trip of getMatchingTrips(trips.value, [...selected])) next[trip.id] = traveler
-    tripAssignments.value = next
+    updateTripAssignments(next, `${traveler} auto-assign`)
   }
 }
 function downloadCsv() {
@@ -265,8 +443,17 @@ function money(value) {
         <span class="upload-symbol">↑</span>
         <span class="upload-main">{{ fileName || 'Choose a PDF statement' }}</span>
         <span class="upload-hint">PDF files only · Processed locally in your browser</span>
-        <input id="pdf-upload" ref="fileInput" type="file" accept="application/pdf,.pdf" @change="onFileChange" />
+        <input
+          id="pdf-upload"
+          ref="fileInput"
+          type="file"
+          accept="application/pdf,.pdf"
+          :disabled="stationDefaultsLoading || Boolean(stationDefaultsError)"
+          @change="onFileChange"
+        />
       </label>
+      <p v-if="stationDefaultsLoading" class="status-line"><span class="spinner"></span> Loading default traveler stations…</p>
+      <div v-if="stationDefaultsError" class="alert" role="alert">{{ stationDefaultsError }}</div>
       <p v-if="loading" class="status-line"><span class="spinner"></span> Reading PDF and extracting trips…</p>
       <div v-if="errorMessage" class="alert" role="alert">{{ errorMessage }}</div>
       <div v-else-if="trips.length" class="success-line">✓ {{ trips.length }} trips found in {{ fileName }}</div>
@@ -302,7 +489,7 @@ function money(value) {
         </div>
       </section>
 
-      <section ref="quickAssignPanel" class="auto-assign-panel panel" aria-labelledby="auto-assign-heading">
+      <section class="auto-assign-panel panel" aria-labelledby="auto-assign-heading">
         <div class="section-heading">
           <div>
             <span class="step-label">QUICK ASSIGN</span>
@@ -353,8 +540,95 @@ function money(value) {
           </div>
         </div>
 
+        <fieldset class="table-filters">
+          <legend>Filter trips</legend>
+          <div class="table-filter-field">
+            <span>Date range</span>
+            <details class="table-filter-dropdown">
+              <summary aria-label="Choose date range">{{ dateRangeLabel }}</summary>
+              <div class="table-filter-menu date-range-menu">
+                <div class="calendar-heading">
+                  <button type="button" aria-label="Previous month" @click="changeCalendarMonth(-1)">‹</button>
+                  <strong>{{ calendarHeading }}</strong>
+                  <button type="button" aria-label="Next month" @click="changeCalendarMonth(1)">›</button>
+                </div>
+                <div class="calendar-grid" role="group" aria-label="Choose date range">
+                  <span v-for="weekday in ['Su', 'Mo', 'Tu', 'We', 'Th', 'Fr', 'Sa']" :key="weekday" class="calendar-weekday">{{ weekday }}</span>
+                  <span v-for="(day, index) in calendarDays" :key="day?.date ?? `blank-${index}`" class="calendar-day-slot">
+                    <button
+                      v-if="day"
+                      type="button"
+                      class="calendar-day"
+                      :class="{ selected: day.selected, 'in-range': day.inRange }"
+                      :aria-pressed="day.selected"
+                      :aria-label="formatCalendarDate(day.date)"
+                      @click="selectCalendarDate(day.date)"
+                    >{{ day.day }}</button>
+                  </span>
+                </div>
+                <p class="calendar-hint">{{ tableFilters.dateFrom && !tableFilters.dateTo ? 'Choose an end date' : 'Choose a start date, then an end date' }}</p>
+              </div>
+            </details>
+          </div>
+          <div class="table-filter-field">
+            <span>Journey contains station</span>
+            <details class="table-filter-dropdown">
+              <summary aria-label="Choose stations">{{ journeyFilterLabel }}</summary>
+              <div class="table-filter-menu station-filter-menu">
+                <label v-for="station in journeyStationOptions" :key="station" class="journey-filter-option">
+                  <input v-model="tableFilters.journey" type="checkbox" :value="station" />
+                  <span>{{ station }}</span>
+                </label>
+                <p v-if="!journeyStationOptions.length" class="station-empty">No stations found.</p>
+              </div>
+            </details>
+          </div>
+          <label class="table-filter-field">
+            <span>Traveler</span>
+            <select v-model="tableFilters.traveler" aria-label="Filter by traveler">
+              <option value="">All travelers</option>
+              <option :value="UNASSIGNED_FILTER">Unassigned</option>
+              <option v-for="traveler in travelers" :key="traveler" :value="traveler">{{ traveler }}</option>
+            </select>
+          </label>
+          <div class="table-filter-field amount-range-filter">
+            <span>Amount range</span>
+            <div class="amount-slider">
+              <div class="amount-slider-values">
+                <span>Min <strong>{{ money(minimumAmountSliderValue / 100) }}</strong></span>
+                <span>Max <strong>{{ money(maximumAmountSliderValue / 100) }}</strong></span>
+              </div>
+              <div class="amount-slider-track">
+                <input
+                  type="range"
+                  :min="amountBounds.min"
+                  :max="amountBounds.max"
+                  step="1"
+                  :value="minimumAmountSliderValue"
+                  aria-label="Minimum amount"
+                  @input="setMinimumAmount($event.target.value)"
+                />
+                <input
+                  type="range"
+                  :min="amountBounds.min"
+                  :max="amountBounds.max"
+                  step="1"
+                  :value="maximumAmountSliderValue"
+                  aria-label="Maximum amount"
+                  @input="setMaximumAmount($event.target.value)"
+                />
+              </div>
+            </div>
+          </div>
+          <button
+            class="button button-ghost clear-filters-button"
+            :disabled="!hasActiveTableFilters"
+            @click="clearTableFilters"
+          >Clear filters</button>
+        </fieldset>
+
         <div class="table-meta">
-          <span>Showing <strong>{{ visibleTrips.length }}</strong> of {{ trips.length }} trips</span>
+          <span>Showing <strong>{{ visibleTrips.length }}</strong> of {{ trips.length }} trips<span v-if="hasActiveTableFilters"> after filtering</span></span>
           <span>{{ selectedTrips.length }} selected</span>
         </div>
         <div class="table-wrap">
@@ -364,6 +638,9 @@ function money(value) {
                 <th class="tick-heading">Tick</th>
                 <th :aria-sort="sortKey === 'date' ? (sortDirection === 'asc' ? 'ascending' : 'descending') : 'none'">
                   <button class="table-sort-button" @click="setSort('date')">Date <span aria-hidden="true">{{ sortIndicator('date') }}</span></button>
+                </th>
+                <th class="day-type-heading" :aria-sort="sortKey === 'day' ? (sortDirection === 'asc' ? 'ascending' : 'descending') : 'none'">
+                  <button class="table-sort-button" @click="setSort('day')">Day <span aria-hidden="true">{{ sortIndicator('day') }}</span></button>
                 </th>
                 <th :aria-sort="sortKey === 'journey' ? (sortDirection === 'asc' ? 'ascending' : 'descending') : 'none'">
                   <button class="table-sort-button" @click="setSort('journey')">Journey <span aria-hidden="true">{{ sortIndicator('journey') }}</span></button>
@@ -382,6 +659,17 @@ function money(value) {
                   <button class="tick-button" :class="{ checked: selectedIds.has(trip.id) }" :aria-pressed="selectedIds.has(trip.id)" :aria-label="selectedIds.has(trip.id) ? 'Exclude this trip' : 'Include this trip'" :title="selectedIds.has(trip.id) ? 'Click to exclude this trip' : 'Click to include this trip'" @click="toggleTrip(trip.id)">{{ selectedIds.has(trip.id) ? '✓' : '' }}</button>
                 </td>
                 <td class="date-cell">{{ trip.date }}</td>
+                <td class="day-type-cell">
+                  <span
+                    v-if="getTripDayType(trip.date)"
+                    class="day-type-icon"
+                    :class="`day-type-${getTripDayType(trip.date)}`"
+                    :aria-label="getTripDayType(trip.date)"
+                    :title="getTripDayType(trip.date) === 'weekend' ? 'Weekend' : 'Weekday'"
+                    role="img"
+                  >{{ getTripDayType(trip.date) === 'weekend' ? '🌴' : '🏢' }}</span>
+                  <span v-else aria-label="Day type unknown" title="Day type unknown">—</span>
+                </td>
                 <td class="journey-cell">{{ trip.journey }}</td>
                 <td class="person-cell">
                   <div class="person-buttons" role="group" :aria-label="`Assign ${trip.journey} to a traveler`">
@@ -398,7 +686,7 @@ function money(value) {
                 </td>
                 <td class="amount-cell">{{ money(trip.amount) }}</td>
               </tr>
-              <tr v-if="!visibleTrips.length"><td colspan="5" class="empty-state">No trips match your search.</td></tr>
+              <tr v-if="!visibleTrips.length"><td colspan="6" class="empty-state">No trips match your search.</td></tr>
             </tbody>
           </table>
         </div>
@@ -428,5 +716,17 @@ function money(value) {
       </section>
     </template>
     <footer>SimplyGo Trip Selector <span>·</span> Your PDF is processed in this browser and is not uploaded to a server.</footer>
+    <button
+      v-if="assignmentHistory.length"
+      class="floating-undo-button"
+      type="button"
+      :aria-label="undoAssignmentLabel"
+      :title="undoAssignmentLabel"
+      @click="undoAssignment"
+    >
+      <svg aria-hidden="true" viewBox="0 0 24 24" fill="none">
+        <path d="M9 14 4 9l5-5M4 9h10.5a5.5 5.5 0 0 1 0 11H11" />
+      </svg>
+    </button>
   </main>
 </template>
