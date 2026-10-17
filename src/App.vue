@@ -34,7 +34,9 @@ const tableFilters = ref({
   traveler: '',
   minAmount: '',
   maxAmount: '',
+  dayType: '',
 })
+const theme = ref('dark')
 const sortKey = ref('person')
 const sortDirection = ref('asc')
 const loading = ref(false)
@@ -44,6 +46,8 @@ const stationDefaultsError = ref('')
 const fileName = ref('')
 const fileInput = ref(null)
 const dateCalendarMonth = ref('')
+const amountSliderTrack = ref(null)
+const activeAmountThumb = ref('')
 
 const visibleTrips = computed(() => {
   const filteredTrips = filterTrips(
@@ -78,6 +82,18 @@ const minimumAmountSliderValue = computed(() => tableFilters.value.minAmount ===
 const maximumAmountSliderValue = computed(() => tableFilters.value.maxAmount === ''
   ? amountBounds.value.max
   : Math.round(Number(tableFilters.value.maxAmount) * 100))
+const amountSliderPositions = computed(() => {
+  const range = amountBounds.value.max - amountBounds.value.min
+  if (!range) return { minimum: 0, maximum: 100 }
+  return {
+    minimum: ((minimumAmountSliderValue.value - amountBounds.value.min) / range) * 100,
+    maximum: ((maximumAmountSliderValue.value - amountBounds.value.min) / range) * 100,
+  }
+})
+const amountSliderSelectionStyle = computed(() => ({
+  left: `${amountSliderPositions.value.minimum}%`,
+  width: `${amountSliderPositions.value.maximum - amountSliderPositions.value.minimum}%`,
+}))
 const dateRangeLabel = computed(() => {
   const { dateFrom, dateTo } = tableFilters.value
   if (dateFrom && dateTo) return `${formatCalendarDate(dateFrom)} – ${formatCalendarDate(dateTo)}`
@@ -152,8 +168,18 @@ const hasActiveTableFilters = computed(() => Boolean(
   || tableFilters.value.journey.length
   || tableFilters.value.traveler
   || tableFilters.value.minAmount !== ''
-  || tableFilters.value.maxAmount !== '',
+  || tableFilters.value.maxAmount !== ''
+  || tableFilters.value.dayType,
 ))
+
+function applyTheme() {
+  document.documentElement.dataset.theme = theme.value
+}
+
+function toggleTheme() {
+  theme.value = theme.value === 'dark' ? 'light' : 'dark'
+  applyTheme()
+}
 
 function closeDropdownsOnOutsideClick(event) {
   const target = event.target
@@ -164,6 +190,7 @@ function closeDropdownsOnOutsideClick(event) {
 }
 
 onMounted(() => {
+  applyTheme()
   document.addEventListener('pointerdown', closeDropdownsOnOutsideClick)
   void loadTravelerStations()
 })
@@ -306,6 +333,7 @@ function clearTableFilters() {
     traveler: '',
     minAmount: '',
     maxAmount: '',
+    dayType: '',
   }
 }
 function setMinimumAmount(value) {
@@ -315,6 +343,62 @@ function setMinimumAmount(value) {
 function setMaximumAmount(value) {
   const cents = Math.max(Number(value), minimumAmountSliderValue.value)
   tableFilters.value.maxAmount = cents === amountBounds.value.max ? '' : (cents / 100).toFixed(2)
+}
+function setAmountThumbFromPointer(event) {
+  const track = amountSliderTrack.value
+  if (!track || !activeAmountThumb.value || amountBounds.value.max <= amountBounds.value.min) return
+
+  const { left, width } = track.getBoundingClientRect()
+  if (!width) return
+  const fraction = Math.min(1, Math.max(0, (event.clientX - left) / width))
+  const amount = Math.round(amountBounds.value.min + fraction * (amountBounds.value.max - amountBounds.value.min))
+  if (activeAmountThumb.value === 'minimum') setMinimumAmount(amount)
+  else setMaximumAmount(amount)
+}
+function startAmountThumbDrag(thumb, event) {
+  if (event.button !== 0 && event.pointerType === 'mouse') return
+  activeAmountThumb.value = thumb
+  amountSliderTrack.value?.setPointerCapture(event.pointerId)
+  setAmountThumbFromPointer(event)
+}
+function startAmountTrackDrag(event) {
+  if (amountBounds.value.max <= amountBounds.value.min) return
+  const minimumPosition = minimumAmountSliderValue.value
+  const maximumPosition = maximumAmountSliderValue.value
+  const { left, width } = event.currentTarget.getBoundingClientRect()
+  if (!width) return
+  const clickedPosition = amountBounds.value.min
+    + Math.min(1, Math.max(0, (event.clientX - left) / width))
+      * (amountBounds.value.max - amountBounds.value.min)
+  activeAmountThumb.value = Math.abs(clickedPosition - minimumPosition)
+    < Math.abs(clickedPosition - maximumPosition)
+    ? 'minimum'
+    : 'maximum'
+  amountSliderTrack.value?.setPointerCapture(event.pointerId)
+  setAmountThumbFromPointer(event)
+}
+function stopAmountThumbDrag(event) {
+  if (amountSliderTrack.value?.hasPointerCapture(event.pointerId)) {
+    amountSliderTrack.value.releasePointerCapture(event.pointerId)
+  }
+  activeAmountThumb.value = ''
+}
+function onAmountThumbKeydown(thumb, event) {
+  let amount
+  const currentValue = thumb === 'minimum'
+    ? minimumAmountSliderValue.value
+    : maximumAmountSliderValue.value
+  if (event.key === 'ArrowRight' || event.key === 'ArrowUp') amount = currentValue + 1
+  else if (event.key === 'ArrowLeft' || event.key === 'ArrowDown') amount = currentValue - 1
+  else if (event.key === 'PageUp') amount = currentValue + 100
+  else if (event.key === 'PageDown') amount = currentValue - 100
+  else if (event.key === 'Home') amount = amountBounds.value.min
+  else if (event.key === 'End') amount = amountBounds.value.max
+  else return
+
+  event.preventDefault()
+  if (thumb === 'minimum') setMinimumAmount(amount)
+  else setMaximumAmount(amount)
 }
 function changeCalendarMonth(offset) {
   if (!dateCalendarMonth.value) return
@@ -430,6 +514,15 @@ function money(value) {
         <h1>SimplyGo Trip Selector</h1>
         <p class="subtitle">Choose the trips you want to include and check your total.</p>
       </div>
+      <button
+        class="theme-toggle"
+        type="button"
+        :aria-label="`Switch to ${theme === 'dark' ? 'light' : 'dark'} mode`"
+        @click="toggleTheme"
+      >
+        <span aria-hidden="true">{{ theme === 'dark' ? '☀' : '☾' }}</span>
+        <span>{{ theme === 'dark' ? 'Light mode' : 'Dark mode' }}</span>
+      </button>
     </header>
 
     <section class="upload-card panel">
@@ -591,6 +684,14 @@ function money(value) {
               <option v-for="traveler in travelers" :key="traveler" :value="traveler">{{ traveler }}</option>
             </select>
           </label>
+          <label class="table-filter-field">
+            <span>Day type</span>
+            <select v-model="tableFilters.dayType" aria-label="Filter by weekday or weekend">
+              <option value="">All days</option>
+              <option value="weekday">Weekdays</option>
+              <option value="weekend">Weekends</option>
+            </select>
+          </label>
           <div class="table-filter-field amount-range-filter">
             <span>Amount range</span>
             <div class="amount-slider">
@@ -598,25 +699,44 @@ function money(value) {
                 <span>Min <strong>{{ money(minimumAmountSliderValue / 100) }}</strong></span>
                 <span>Max <strong>{{ money(maximumAmountSliderValue / 100) }}</strong></span>
               </div>
-              <div class="amount-slider-track">
-                <input
-                  type="range"
-                  :min="amountBounds.min"
-                  :max="amountBounds.max"
-                  step="1"
-                  :value="minimumAmountSliderValue"
+              <div
+                ref="amountSliderTrack"
+                class="amount-slider-track"
+                @pointerdown.self="startAmountTrackDrag"
+                @pointermove="setAmountThumbFromPointer"
+                @pointerup="stopAmountThumbDrag"
+                @pointercancel="stopAmountThumbDrag"
+                @lostpointercapture="activeAmountThumb = ''"
+              >
+                <span class="amount-slider-selection" :style="amountSliderSelectionStyle"></span>
+                <button
+                  class="amount-slider-thumb amount-slider-thumb-minimum"
+                  :class="{ active: activeAmountThumb === 'minimum' }"
+                  :style="{ left: `${amountSliderPositions.minimum}%` }"
+                  type="button"
+                  role="slider"
                   aria-label="Minimum amount"
-                  @input="setMinimumAmount($event.target.value)"
-                />
-                <input
-                  type="range"
-                  :min="amountBounds.min"
-                  :max="amountBounds.max"
-                  step="1"
-                  :value="maximumAmountSliderValue"
+                  :aria-valuemin="amountBounds.min / 100"
+                  :aria-valuemax="maximumAmountSliderValue / 100"
+                  :aria-valuenow="minimumAmountSliderValue / 100"
+                  :aria-valuetext="money(minimumAmountSliderValue / 100)"
+                  @pointerdown.stop="startAmountThumbDrag('minimum', $event)"
+                  @keydown="onAmountThumbKeydown('minimum', $event)"
+                ></button>
+                <button
+                  class="amount-slider-thumb amount-slider-thumb-maximum"
+                  :class="{ active: activeAmountThumb === 'maximum' }"
+                  :style="{ left: `${amountSliderPositions.maximum}%` }"
+                  type="button"
+                  role="slider"
                   aria-label="Maximum amount"
-                  @input="setMaximumAmount($event.target.value)"
-                />
+                  :aria-valuemin="minimumAmountSliderValue / 100"
+                  :aria-valuemax="amountBounds.max / 100"
+                  :aria-valuenow="maximumAmountSliderValue / 100"
+                  :aria-valuetext="money(maximumAmountSliderValue / 100)"
+                  @pointerdown.stop="startAmountThumbDrag('maximum', $event)"
+                  @keydown="onAmountThumbKeydown('maximum', $event)"
+                ></button>
               </div>
             </div>
           </div>

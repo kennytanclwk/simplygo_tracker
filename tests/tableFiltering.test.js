@@ -16,6 +16,7 @@ const emptyFilters = {
   traveler: '',
   minAmount: '',
   maxAmount: '',
+  dayType: '',
 }
 
 test('filters dates inclusively by a from and to range', () => {
@@ -77,5 +78,22 @@ test('excludes unparseable dates when a date range is active', () => {
   assert.deepEqual(
     filterTrips(rows, {}, '', { ...emptyFilters, dateFrom: '2026-10-01' }),
     [],
+  )
+})
+
+test('filters trips by weekday and weekend', () => {
+  assert.deepEqual(
+    filterTrips(trips, assignments, '', {
+      ...emptyFilters,
+      dayType: 'weekend',
+    }).map((trip) => trip.id),
+    ['kenny'],
+  )
+  assert.deepEqual(
+    filterTrips(trips, assignments, '', {
+      ...emptyFilters,
+      dayType: 'weekday',
+    }).map((trip) => trip.id),
+    ['unassigned', 'dexter', 'chiew'],
   )
 })

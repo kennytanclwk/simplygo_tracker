@@ -7,6 +7,8 @@ A Vue 3 + Vite web app that recreates the key features of the Streamlit version:
 - Parse trip date, journey, fare, and statement total
 - Search by date or journey
 - Filter trips by a single-calendar date range, selected stations within journeys, traveler (including unassigned), and amount range
+- Filter trips by weekday or weekend
+- Switch between dark and light appearance; dark mode is the default
 - Sort trips by date, day type, journey, traveler, or amount; unassigned trips stay at the top when sorting by traveler
 - Show a weekday or weekend icon for each trip
 - Select/deselect individual trips, select visible trips, or clear all

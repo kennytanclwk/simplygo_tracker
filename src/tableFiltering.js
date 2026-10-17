@@ -1,5 +1,5 @@
 export const UNASSIGNED_FILTER = '__unassigned__'
-import { parseTripDate } from './tripDate.js'
+import { getTripDayType, parseTripDate } from './tripDate.js'
 
 export function filterTrips(trips, assignments, searchText, filters) {
   const query = searchText.trim().toLowerCase()
@@ -14,6 +14,7 @@ export function filterTrips(trips, assignments, searchText, filters) {
     if (filters.dateFrom && (!date || date < filters.dateFrom)) return false
     if (filters.dateTo && (!date || date > filters.dateTo)) return false
     if (hasDateBounds && !date) return false
+    if (filters.dayType && getTripDayType(trip.date) !== filters.dayType) return false
 
     const journey = trip.journey.toLowerCase()
     if (selectedStations.size && ![...selectedStations].some((station) =>
